@@ -1,0 +1,466 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>DumDB tests</title>
+    <style>
+      p {
+        /*font-family: monospace;*/
+      }
+      .test_result {
+        margin: 0;
+      }
+
+      .success {
+        color: green;
+      }
+      .failure {
+        color: red;
+      }
+
+      .success::before {
+        content: "✔ ";
+      }
+      .failure::before {
+        content: "✘ ";
+      }
+    </style>
+  </head>
+  <body>
+    Regex: <input id="testRegex" value="" /> Random seed:
+    <input id="testSeed" value="0" />
+    <button id="resetTestSettings">Reset</button>
+    <br />
+    <button id="runTests">Run tests</button>
+    <div id="responseContainer"></div>
+
+    <script>
+      //https://stackoverflow.com/questions/521295/seeding-the-random-number-generator-in-javascript
+      function splitmix32(a) {
+        return function () {
+          a |= 0;
+          a = (a + 0x9e3779b9) | 0;
+          let t = a ^ (a >>> 16);
+          t = Math.imul(t, 0x21f0aaad);
+          t = t ^ (t >>> 15);
+          t = Math.imul(t, 0x735a2d97);
+          return ((t = t ^ (t >>> 15)) >>> 0) / 4294967296;
+        };
+      }
+
+      function get_shuffled_indexes(length, seed) {
+        const prng = splitmix32(seed);
+        const indexes = Array.from({ length }, (_, i) => i);
+
+        for (let i = length - 1; i > 0; i--) {
+          const j = Math.floor(prng() * (i + 1));
+          [indexes[i], indexes[j]] = [indexes[j], indexes[i]];
+        }
+
+        return indexes;
+      }
+
+      const the_tests = [];
+      function it(description, body_of_test) {
+        the_tests.push({ description, body_of_test });
+      }
+
+      async function showTestAndServerStatus() {
+        const response = await postToEndpoint("/status");
+        const {
+          bodyObject: { buildTime },
+        } = response;
+        const msPassed = new Date() - new Date(buildTime);
+        logToPage(`Server age: ${formatDuration(msPassed)}`);
+        logToPage(`Number of tests: ${the_tests.length}`);
+      }
+
+      function formatDuration(milliseconds) {
+        const units = [
+          { n: 60, u: "second" },
+          { n: 60, u: "minute" },
+          { n: 24, u: "hour" },
+          { n: 365, u: "day" },
+          { n: Infinity, u: "year" },
+        ];
+
+        const durationParts = units
+          .reduce(
+            (acc, { n, u }, idx) => {
+              acc.parts.push({ v: Math.floor(acc.scaled % n), u });
+              acc.scaled /= n;
+              return acc;
+            },
+            { parts: [], scaled: milliseconds / 1000 }
+          )
+          .parts.reverse();
+        const startIndex = durationParts.findIndex((item) => item.v > 0);
+
+        return durationParts
+          .slice(startIndex)
+          .map(({ v, u }) => `${v} ${u}${v !== 1 ? "s" : ""}`)
+          .join(", ");
+      }
+
+      async function run_all_tests(regexString, testSeedString) {
+        var succeeded = 0;
+        var failed = 0;
+        const seed =
+          testSeedString === ""
+            ? (Math.random() * new Date()) | 0
+            : parseInt(testSeedString);
+        logToPage(`Random seed used to shuffle order of tests: ${seed}`);
+        const shuffled_indexes =
+          seed === 0
+            ? Array.from({ length: the_tests.length }, (_, i) => i)
+            : get_shuffled_indexes(the_tests.length, seed);
+
+        let regex = new RegExp(regexString);
+        for (let i = 0; i < shuffled_indexes.length; i++) {
+          const { description, body_of_test } = the_tests[shuffled_indexes[i]];
+
+          //logToPage(`Testing "${description}" against regex`);
+          //logToPage(`${regex.test(description)}`);
+          if (regex.test(description)) {
+            const result = document.createElement("p");
+            result.classList.add("test_result");
+
+            try {
+              const serverPostCountBefore = serverPostCount;
+              await body_of_test();
+              result.classList.add("success");
+              result.innerHTML = `${shuffled_indexes[i]}: ${description} (${
+                serverPostCount - serverPostCountBefore
+              } server calls)`;
+              succeeded++;
+            } catch (error) {
+              console.log(error);
+              result.classList.add("failure");
+              result.innerHTML = `${shuffled_indexes[i]}: ${description}<br/><pre>${error}</pre>`;
+              failed++;
+            }
+            document.body.appendChild(result);
+          }
+        }
+        const summary = document.createElement("p");
+        summary.classList.add("test_result");
+        summary.classList.add(failed > 0 ? "failure" : "success");
+        summary.innerHTML = `<meter value=${
+          succeeded / (succeeded + failed)
+        }></meter>${succeeded} test${succeeded !== 1 ? "s" : ""} of ${
+          failed + succeeded
+        } tests succeeded${failed > 0 ? ` – ${failed} failed` : ""}`;
+        document.body.appendChild(summary);
+      }
+
+      function assertEqual(x, y) {
+        console.log({ where: "assertEqual", x, y });
+        console.log(x);
+        const actual = JSON.stringify(x);
+        const expected = JSON.stringify(y);
+        if (actual === expected) {
+          return;
+        } else {
+          throw new Error(`Expected:\n ${expected}\nbut got:\n ${actual}`);
+        }
+      }
+
+      function assertTrue(x) {
+        assertEqual(x, true);
+      }
+
+      function assertFalse(x) {
+        assertEqual(x, false);
+      }
+
+      function assertEqualJSON(s, o) {
+        const left = JSON.stringify(JSON.parse(s));
+        const right = JSON.stringify(o);
+        if (left !== right) {
+          throw new Error(`${left} != ${right}`);
+        }
+        return;
+      }
+
+      it("should return 404 for non-existing path", async () => {
+        const resetResponse = await postToEndpoint("/non-existing-path");
+        assertEqual(resetResponse.status, 404);
+        assertEqual(resetResponse.bodyObject, {
+          status: 404,
+          message: "Non-existing path: /non-existing-path",
+        });
+      });
+
+      it("should return 404 for non-existing path that needs JSON escaping", async () => {
+        const resetResponse = await postToEndpoint('/non-existing-path"');
+        assertEqual(resetResponse.status, 404);
+        assertEqual(resetResponse.bodyObject, {
+          status: 404,
+          message: 'Non-existing path: /non-existing-path"',
+        });
+      });
+
+      it("should do basic insertOne operations", async () => {
+        const resetResponse = await postToEndpoint("/test/reset");
+        assertEqual(resetResponse.bodyObject, { message: "Database reset" });
+        const insertResponse = await postToEndpoint("/documents/insertOne", {
+          name: "Jane Doe",
+          age: 33,
+          city: "London",
+        });
+        assertEqual(insertResponse.bodyObject, {
+          _id: "000000000000000000000001",
+        });
+        assertEqual(
+          (
+            await postToEndpoint("/documents/insertOne", {
+              name: "John Doe",
+              age: 30,
+              city: "New York",
+            })
+          ).bodyObject,
+          { _id: "000000000000000000000002" }
+        );
+      });
+
+      it("should do basic findOne operations", async () => {
+        const aDocument = {
+          name: "Jane Doe",
+          age: 33,
+          city: "London",
+        };
+        const insertResponse = await postToEndpoint(
+          "/documents/insertOne",
+          aDocument
+        );
+        const _id = insertResponse.bodyObject["_id"];
+        const findOneResponse = await postToEndpoint("/documents/findOne", {
+          _id,
+        });
+        assertEqual(findOneResponse.bodyObject, { _id, ...aDocument });
+      });
+
+      it("should return 404 when findOne finds nothing", async () => {
+        const _id = "112233445566778899001122";
+        const findOneResponse = await postToEndpoint("/documents/findOne", {
+          _id,
+        });
+        assertEqual(findOneResponse.status, 404);
+      });
+
+      it("should delete documents with deleteOne operation", async () => {
+        const randomString = () => {
+          const length = Math.floor(Math.random() * 10) + 1; // Random length between 1 and 10
+          const characters =
+            "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+          let result = "";
+          for (let i = 0; i < length; i++) {
+            const randomIndex = Math.floor(Math.random() * characters.length);
+            result += characters.charAt(randomIndex);
+          }
+          return result;
+        };
+
+        const aDocument = {
+          name: "Jane Doe",
+          age: 33,
+          city: "London",
+          randomString: randomString(),
+        };
+        const insertResponse = await postToEndpoint(
+          "/documents/insertOne",
+          aDocument
+        );
+
+        const _id = insertResponse.bodyObject["_id"];
+
+        const aDocumentToKeep = {
+          name: "Keeper Doe",
+          age: 81,
+          city: "Secret",
+          randomString: randomString(),
+        };
+
+        await postToEndpoint("/documents/insertOne", aDocumentToKeep);
+        const deleteOneResponse = await postToEndpoint("/documents/deleteOne", {
+          _id,
+        });
+        assertEqual(deleteOneResponse.status, 200);
+        assertEqual(deleteOneResponse.bodyObject, {
+          status: 200,
+          message: "Document deleted",
+        });
+
+        const findOneResponse = await postToEndpoint("/documents/findOne", {
+          _id,
+        });
+        assertEqual(findOneResponse.status, 404);
+        assertEqual(findOneResponse.bodyObject, {
+          status: 404,
+          message: "No document found",
+        });
+      });
+
+      it("should not destroy db after multiple deleteOne operation", async () => {
+        const randomString = () => {
+          const length = Math.floor(Math.random() * 20) + 1; // Random length between 1 and 10
+          const characters =
+            "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+          let result = "";
+          for (let i = 0; i < length; i++) {
+            const randomIndex = Math.floor(Math.random() * characters.length);
+            result += characters.charAt(randomIndex);
+          }
+          return result;
+        };
+
+        for (i = 0; i < 100; i++) {
+          const aDocument = {
+            name: "Jane Doe",
+            age: 33,
+            city: "London",
+            randomString: randomString(),
+          };
+          const insertResponse = await postToEndpoint(
+            "/documents/insertOne",
+            aDocument
+          );
+
+          const _id = insertResponse.bodyObject["_id"];
+
+          const aDocumentToKeep = {
+            name: "Keeper Doe",
+            age: 81,
+            city: "Secret",
+            randomString: randomString(),
+          };
+
+          await postToEndpoint("/documents/insertOne", aDocumentToKeep);
+          const deleteOneResponse = await postToEndpoint(
+            "/documents/deleteOne",
+            {
+              _id,
+            }
+          );
+          assertEqual(deleteOneResponse.status, 200);
+          assertEqual(deleteOneResponse.bodyObject, {
+            status: 200,
+            message: "Document deleted",
+          });
+
+          const findOneResponse = await postToEndpoint("/documents/findOne", {
+            _id,
+          });
+          assertEqual(findOneResponse.status, 404);
+          assertEqual(findOneResponse.bodyObject, {
+            status: 404,
+            message: "No document found",
+          });
+        }
+      });
+
+      it("should continue on correct sequence id after restart", async () => {
+        const resetResponse = await postToEndpoint("/test/reset");
+        assertEqual(resetResponse.bodyObject, { message: "Database reset" });
+        const insertResponse = await postToEndpoint("/documents/insertOne", {
+          name: "Jane Doe",
+          age: 33,
+          city: "London",
+        });
+        assertEqual(insertResponse.bodyObject, {
+          _id: "000000000000000000000001",
+        });
+        await postToEndpoint("/documents/insertOne", {
+          name: "Jonas Doe",
+          age: 53,
+          city: "Sidney",
+        });
+        await postToEndpoint("/documents/insertOne", {
+          name: "Jill Doe",
+          age: 13,
+          city: "Noordhollandschkanaaldijk",
+        });
+        // Restart figures out on which sequence number to start from
+        const restartResponse = await postToEndpoint("/test/restart");
+        assertEqual(restartResponse.bodyObject, {
+          message: "Database restarted",
+        });
+        assertEqual(
+          (
+            await postToEndpoint("/documents/insertOne", {
+              name: "John Doe",
+              age: 30,
+              city: "New York",
+              personal: { hobbies: ["Gardening", "Curling"] },
+            })
+          ).bodyObject,
+          { _id: "000000000000000000000004" }
+        );
+      });
+
+      console.log({ the_tests });
+      const baseUrl = "http://localhost:8080";
+
+      var serverPostCount = 0;
+      async function postToEndpoint(endpoint, payload) {
+        // Determine if the payload is an object and stringify it if so
+        const isObject = payload !== null && typeof payload === "object";
+        const body = (isObject ? JSON.stringify(payload) : payload) || "{}";
+
+        //logToPage(`Calling server at: ${endpoint}`);
+        try {
+          serverPostCount++;
+          const response = await fetch(`${baseUrl}${endpoint}`, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+            },
+            body: body,
+          });
+
+          const responseText = await response.text();
+
+          result = {
+            status: response.status,
+            body: responseText,
+            bodyObject: JSON.parse(responseText),
+          };
+          console.log(result);
+          //logToPage(`Server returned`);
+          return result;
+        } catch (error) {
+          //logToPage(`Server errored`);
+          console.error("Error:", error);
+          throw error;
+        }
+      }
+
+      function logToPage(s) {
+        const p = document.createElement("p");
+        p.textContent = s;
+        //document.getElementById("responseContainer").appendChild(p);
+        document.body.appendChild(p);
+      }
+
+      async function runTests() {
+        const regexString = document.getElementById("testRegex").value;
+        const testSeedString = document.getElementById("testSeed").value;
+        await run_all_tests(regexString, testSeedString);
+      }
+
+      document
+        .getElementById("runTests")
+        .addEventListener("click", async function () {
+          runTests();
+        });
+      document
+        .getElementById("resetTestSettings")
+        .addEventListener("click", async function () {
+          document.getElementById("testRegex").value = ".*";
+          document.getElementById("testSeed").value = "";
+        });
+      showTestAndServerStatus();
+    </script>
+  </body>
+</html>
