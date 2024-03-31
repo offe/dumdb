@@ -739,8 +739,7 @@ int main(int argc, char *argv[])
 const char *corsHeaders =
     "Access-Control-Allow-Origin: *\r\n"
     "Access-Control-Allow-Methods: POST, OPTIONS\r\n"
-    "Access-Control-Allow-Headers: Content-Type, Authorization\r\n"
-    "Content-Type: application/json\r\n";
+    "Access-Control-Allow-Headers: Content-Type\r\n";
 
 struct Response *createResponseForRequest(const struct Request *request, struct Connection *connection)
 {
