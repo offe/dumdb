@@ -49,6 +49,20 @@ For testing the server also supports:
 - reset (deletes the database, useful for testing)
 - restart (rereads the database from file, also useful for testing)
 
+### Algorithms
+
+- Startup
+  O(N) - Reads through the entire database file to find highest sequence id
+
+- /documents/insertOne
+  O(1) - It simply adds the document to the end of the file
+
+- /documents/findOne
+  O(N) - Reads through the entire database (or stops when it finds the document)
+
+- /documents/deleteOne
+  O(N) - Reads throught the entire database to find the document. Then tries to move the last document to the space left by the deleted document.
+
 ### To build and run (on macos):
 
 clang -o build/dumdb_server src/main.c -Iinclude -lpthread && build/dumdb_server
@@ -61,6 +75,8 @@ curl -X POST http://localhost:8080/documents/find \
  -H "Content-Type: application/json" \
  -d '{"\_id": "000000000000000000000001"}'
 
+You can also load the test/tests.html in a browser. Click the button to run the tests.
+
 ### Reason why it was built
 
 I am fascinated by MongoDB and how it allows you to build something fast without planning too much. Then you can use indexes in many cases to still achieve the necessary performance. I wanted to have a sandbox to implement a simple version of MongoDB's indexes. I haven't actually gotten to that part in DumDB, and maybe I never will.
@@ -68,7 +84,9 @@ I am fascinated by MongoDB and how it allows you to build something fast without
 ### Fun stuff to try
 
 ( ) Stop searching backwards to find where to truncate file. That should be done while parsing the file
+
 ( ) Create a reversed JSON parser, that reads the file from then end to find the last object
+
 ( ) Use off_t as type for positions in files
 
 ( ) documents/findOne - look at more than just \_id, but only equality at first
@@ -94,9 +112,6 @@ I am fascinated by MongoDB and how it allows you to build something fast without
 ( ) Create a reversed JSON parser, to find where the last document starts and ends
 
 ### Credits
-
-X for jsmn.h
-Y for Embe
 
 - X for EmbeddableWebServer.h
 - Y for jsmn.h
