@@ -784,19 +784,6 @@ struct Response *createResponseForRequest(const struct Request *request, struct 
 
   printf("POST for %s\n", request->pathDecoded);
 
-  /////////////////
-  // /test/reset //
-  /////////////////
-  if (0 == strcmp(request->pathDecoded, "/test/reset"))
-  {
-    reset_file();
-    sequence_number = 1;
-
-    struct Response *response = responseAllocWithFormat(200, "OK", "application/json", "{ \"message\": \"Database reset\" }");
-    response->extraHeaders = strdup(corsHeaders);
-    return response;
-  }
-
   ///////////////////
   // /test/restart //
   ///////////////////
