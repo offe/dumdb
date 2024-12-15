@@ -1,6 +1,6 @@
 ## DumDB
 
-DumDB is a lightweight toy clone of MongoDB. It's not production quality and will probably never be.
+DumDB is a lightweight toy clone of MongoDB. It's not production quality and will most likely never be.
 
 There are loads of differences between DumDB and MongoDB.
 
